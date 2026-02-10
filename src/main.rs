@@ -1,6 +1,9 @@
 use rand::Rng;
 use std::collections::HashMap;
 
+mod bagging;
+use bagging::{BaggedKMeans, ClusteringMetrics};
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
     pub x: f64,
@@ -261,6 +264,79 @@ fn main() {
         if let Ok((centroids, assignments)) = kmeans_test.fit(&data) {
             let inertia = kmeans_test.calculate_inertia(&data, &centroids, &assignments);
             println!("k={}: inertia = {:.2}", k, inertia);
+        }
+    }
+
+    // Demonstrate Bagged K-Means
+    println!("\n{}", "=".repeat(50));
+    println!("BAGGED K-MEANS CLUSTERING");
+    println!("{}", "=".repeat(50));
+
+    // Create bagged k-means with 10 estimators
+    let bagged_kmeans = BaggedKMeans::new(
+        10,     // n_estimators
+        3,      // k clusters
+        50,     // max_iterations per model
+        0.01,   // tolerance
+        None,   // sample_size (use full data size)
+    );
+
+    // Perform bagged clustering
+    match bagged_kmeans.fit(&data) {
+        Ok(bagged_result) => {
+            println!("\nBagged K-Means Results:");
+            println!("======================");
+
+            // Print consensus centroids
+            println!("Consensus centroids:");
+            for (i, centroid) in bagged_result.consensus_centroids.iter().enumerate() {
+                println!("Cluster {}: ({:.2}, {:.2})", i + 1, centroid.x, centroid.y);
+            }
+
+            // Print consensus assignments with confidence
+            println!("\nConsensus assignments (with confidence):");
+            for (i, (point, (&cluster, &confidence))) in data.iter()
+                .zip(bagged_result.consensus_assignments.iter()
+                .zip(bagged_result.confidence_scores.iter())).enumerate() {
+                println!("Point {} ({:.2}, {:.2}) -> Cluster {} (confidence: {:.2})", 
+                        i + 1, point.x, point.y, cluster + 1, confidence);
+            }
+
+            // Evaluate clustering quality
+            let metrics = bagged_kmeans.evaluate_clustering(&data, &bagged_result);
+            println!("\nClustering Quality Metrics:");
+            println!("===========================");
+            println!("Inertia: {:.2}", metrics.inertia);
+            println!("Stability: {:.2}", metrics.stability);
+            println!("Silhouette Score: {:.2}", metrics.silhouette_score);
+            println!("Number of Models: {}", metrics.n_models);
+
+            // Show points with low confidence (potential outliers/uncertain points)
+            println!("\nLow Confidence Points (< 0.7):");
+            println!("==============================");
+            for (i, (point, (&cluster, &confidence))) in data.iter()
+                .zip(bagged_result.consensus_assignments.iter()
+                .zip(bagged_result.confidence_scores.iter())).enumerate() {
+                if confidence < 0.7 {
+                    println!("Point {} ({:.2}, {:.2}) -> Cluster {} (confidence: {:.2})", 
+                            i + 1, point.x, point.y, cluster + 1, confidence);
+                }
+            }
+
+            // Compare with single k-means
+            println!("\nComparison with Single K-Means:");
+            println!("===============================");
+            let single_kmeans = KMeans::new(3, 50, 0.01);
+            if let Ok((single_centroids, single_assignments)) = single_kmeans.fit(&data) {
+                let single_inertia = single_kmeans.calculate_inertia(&data, &single_centroids, &single_assignments);
+                println!("Single K-Means Inertia: {:.2}", single_inertia);
+                println!("Bagged K-Means Inertia: {:.2}", metrics.inertia);
+                println!("Improvement: {:.2}%", 
+                    ((single_inertia - metrics.inertia) / single_inertia * 100.0).max(0.0));
+            }
+        }
+        Err(e) => {
+            eprintln!("Error during bagged clustering: {}", e);
         }
     }
 }
